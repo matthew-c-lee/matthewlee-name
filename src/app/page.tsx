@@ -16,7 +16,7 @@ export default function Home() {
 
                 <div className="border-4 border-dashed border-yellow-600 dark:border-yellow-400 p-6 rounded-lg mt-10">
                     <p className="text-yellow-700 dark:text-yellow-200 font-mono">
-                        [Status: 1% Done. There's a header. That counts.]
+                        [Status: 1% Done. There&apos;s a header. That counts.]
                     </p>
                 </div>
             </div>
