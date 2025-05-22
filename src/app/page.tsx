@@ -8,7 +8,7 @@ export default function Home() {
                     🚧 Under Construction 🚧
                 </h1>
                 <p className="text-lg text-yellow-700 dark:text-yellow-300">
-                    The site is currently being hammered together with love, TypeScript, and some duct tape.
+                    Currently being hammered together with love, TypeScript, and some duct tape.
                 </p>
                 <p className="text-sm text-yellow-600 dark:text-yellow-400">
                     Check back soon for something less chaotic and more complete.
