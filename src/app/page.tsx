@@ -4,7 +4,7 @@ export default function Home() {
     return (
         <main className="flex min-h-screen flex-col items-center justify-center bg-yellow-100 dark:bg-yellow-900 p-10 text-center">
             <div className="max-w-xl space-y-6">
-                <h1 className="text-5xl font-extrabold text-yellow-800 dark:text-yellow-200">
+                <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-yellow-800 dark:text-yellow-200">
                     🚧 Under Construction 🚧
                 </h1>
                 <p className="text-lg text-yellow-700 dark:text-yellow-300">
