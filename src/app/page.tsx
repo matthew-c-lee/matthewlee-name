@@ -4,8 +4,10 @@ export default function Home() {
     return (
         <main className="flex min-h-screen flex-col items-center justify-center bg-yellow-100 dark:bg-yellow-900 p-10 text-center">
             <div className="max-w-xl space-y-6">
-                <h1 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-yellow-800 dark:text-yellow-200">
-                    🚧 Under Construction 🚧
+                <h1 className="flex flex-wrap justify-center items-center gap-2 text-3xl sm:text-4xl md:text-5xl font-extrabold text-yellow-800 dark:text-yellow-200">
+                    <span role="img" aria-label="construction">🚧</span>
+                    <span>Under Construction</span>
+                    <span role="img" aria-label="construction">🚧</span>
                 </h1>
                 <p className="text-lg text-yellow-700 dark:text-yellow-300">
                     Currently being hammered together with love, TypeScript, and some duct tape.
