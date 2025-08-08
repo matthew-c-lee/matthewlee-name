@@ -10,5 +10,7 @@ const withMDX = createMDX({
 });
 
 export default withMDX({
+  output: 'export',
   pageExtensions: ['js', 'jsx', 'ts', 'tsx', 'md', 'mdx'],
+  images: { unoptimized: true },
 });
