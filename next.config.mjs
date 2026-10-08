@@ -11,6 +11,7 @@ const withMDX = createMDX({
 
 export default withMDX({
   output: 'export',
+  basePath: process.env.PAGES_BASE_PATH || '',
   pageExtensions: ['js', 'jsx', 'ts', 'tsx', 'md', 'mdx'],
   images: { unoptimized: true },
 });

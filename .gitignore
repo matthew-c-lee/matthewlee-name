@@ -26,7 +26,16 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
-.env*.local
+.env
+.env.*
+!.env.example
+
+# private snapshots, renderer state, downloads, and generated map files
+/.bluemap/
+/.tools/
+/worlds/
+/public/bluemap/*
+!/public/bluemap/index.html
 
 # vercel
 .vercel
