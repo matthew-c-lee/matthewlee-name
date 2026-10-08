@@ -54,6 +54,12 @@ discards the snapshot. Every region is downloaded again, including equal-size fi
 external `.mcc` chunk files are included. Transfers have bounded retries/timeouts and atomic
 file writes; incomplete snapshots never become renderer input.
 
+Zero-byte `.mca` files are retained as empty regions, matching BlueMap's own reader. This
+also lets incremental rendering remove terrain that no longer exists. The binary permission
+probe selects a non-empty region. Empty `level.dat` or `.mcc` files still fail validation, and
+an empty response for a file advertised as non-empty is retried rather than accepted.
+[BlueMap's region reader](https://github.com/BlueMap-Minecraft/BlueMap/blob/v5.28/core/src/main/java/de/bluecolored/bluemap/core/world/mca/region/MCARegion.java)
+
 If file-info or binary downloads are restricted, download the world while offline from the
 exaroton **Worlds** page in your browser, then supply its folder or ZIP locally through
 `BLUEMAP_WORLD_SOURCE`. [Official world download instructions](https://support.exaroton.com/hc/en-us/articles/360019857598-Download-your-world)
@@ -171,7 +177,7 @@ the modern Overworld path, valid downloaded `level.dat`, and one complete valid 
 the entire real world has not been downloaded/rendered yet, and its final map size has not
 been measured. The original token was used only in memory and is not stored in this project.
 
-Completed implementation checks: existing lint; all 35 map tests (including actual ZIP
+Completed implementation checks: existing lint; all 41 map tests (including actual ZIP
 extraction); production export with both custom-domain and repository base paths; and
 combined iframe, full-map link, assets, CNAME and size validation. Actual Java 25/BlueMap 5.28
 renders of a small synthetic Minecraft 26.2 world produced compressed 3D tiles, reused

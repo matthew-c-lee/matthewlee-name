@@ -116,10 +116,10 @@ function client({ token, serverId, fetchImpl, timeoutMs, signal }) {
             }
           })());
           await pipeline(source, createWriteStream(temporary, { flags: 'wx', mode: 0o600 }), { signal: requestSignal });
-          await validateWorldFile(temporary, remote);
-          if (!bytes || (Number.isSafeInteger(expectedSize) && bytes !== expectedSize)) {
+          if ((!bytes && expectedSize !== 0) || (Number.isSafeInteger(expectedSize) && bytes !== expectedSize)) {
             throw new Error('Incomplete world file download.');
           }
+          await validateWorldFile(temporary, remote);
           await rename(temporary, destination);
         } finally {
           await rm(temporary, { force: true });
@@ -262,7 +262,12 @@ export async function watchOffline({ token, serverId, onFailure, timeoutMs = 300
 
 async function validateWorldFile(file, name) {
   const info = await stat(file);
-  if (!info.size) throw new SnapshotUnavailable('A supplied world file is empty.');
+  if (!info.size) {
+    // BlueMap's MCARegion treats zero-byte .mca files as regions with no chunks.
+    // Keep them in the snapshot so incremental renders can remove old terrain.
+    if (REGION_FILE.test(path.posix.basename(name))) return;
+    throw new SnapshotUnavailable(`World file is empty: ${path.posix.basename(name)}.`);
+  }
   if (path.posix.basename(name) === 'level.dat') {
     if (info.size > 32 * 1024 ** 2) throw new SnapshotUnavailable('level.dat exceeds the allowed size.');
     const handle = await open(file, 'r');
@@ -422,9 +427,18 @@ export async function acquireSnapshot({ stateDir = '.bluemap', env = process.env
         if (entries.some((name) => REGION_FILE.test(name))) { regionDirectory = directory; names = entries; break; }
       }
       if (!regionDirectory) throw new SnapshotUnavailable('No Overworld region .mca files were available in the classic or modern world layout. Check EXAROTON_WORLD_PATH or set EXAROTON_REGION_PATH.');
-      const firstName = names.find((name) => REGION_FILE.test(name));
-      const first = await api.json(`/files/info/${encodedPath(`${regionDirectory}/${firstName}`)}/`);
-      if (first.isDirectory || first.isReadable !== true) throw new SnapshotUnavailable('exaroton does not allow binary region downloads for this account. Supply BLUEMAP_WORLD_SOURCE using an offline world export.');
+      let firstName;
+      let first;
+      for (const name of names.filter((entry) => REGION_FILE.test(entry))) {
+        await check();
+        const info = await api.json(`/files/info/${encodedPath(`${regionDirectory}/${name}`)}/`);
+        if (info.isDirectory || info.isReadable !== true) throw new SnapshotUnavailable('exaroton does not allow binary region downloads for this account. Supply BLUEMAP_WORLD_SOURCE using an offline world export.');
+        if (info.size === 0) continue;
+        firstName = name;
+        first = info;
+        break;
+      }
+      if (!firstName) throw new SnapshotUnavailable('The Overworld has no non-empty region files to render; the previous map is retained.');
       // Actually download both binary probes before collecting the rest. Metadata
       // alone does not establish that this account can download a world.
       let bytes = await api.download(`${world}/level.dat`, path.join(staging, 'level.dat'), level.size, maxBytes);

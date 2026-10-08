@@ -41,15 +41,16 @@ function fakeMonitor() {
   };
 }
 
-function fakeAPI({ readable = true, status = 0, binaryFailure = false, modify, transient = false, regionData = REGION, regionPath = 'region', binaryType = 'application/octet-stream' } = {}) {
+function fakeAPI({ readable = true, status = 0, binaryFailure = false, modify, transient = false, regionData = REGION, regionPath = 'region', binaryType = 'application/octet-stream', levelData = LEVEL, externalChunkData = Buffer.from([1, 2, 3]), extraFiles = {} } = {}) {
   const downloads = [];
   const requests = [];
   let transientFailed = false;
   const files = {
-    'world/level.dat': LEVEL,
+    'world/level.dat': levelData,
     [`world/${regionPath}/r.0.0.mca`]: regionData,
     [`world/${regionPath}/r.1.0.mca`]: REGION,
-    [`world/${regionPath}/c.0.0.mcc`]: Buffer.from([1, 2, 3]),
+    [`world/${regionPath}/c.0.0.mcc`]: externalChunkData,
+    ...extraFiles,
   };
   return {
     downloads, requests,
@@ -149,7 +150,7 @@ test('binary probe restriction preserves the prior snapshot and stops the remain
   const monitor = fakeMonitor();
   const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl: api.fetch, monitorFactory: monitor.factory });
   assert.equal(result.status, 'skipped');
-  assert.deepEqual(api.downloads, ['world/level.dat']);
+  assert.deepEqual(api.downloads, ['world/level.dat', 'world/level.dat', 'world/level.dat']);
   assert.deepEqual(await readdir(path.join(root, 'state')), ['world']);
   assert.equal(await readFile(path.join(root, 'state', 'world', 'previous'), 'utf8'), 'last successful snapshot');
   assert.ok(!result.reason.includes(ENV.EXAROTON_API_TOKEN));
@@ -187,6 +188,95 @@ test('status stream interruption discards a partially downloaded snapshot', asyn
   assert.equal(monitor.closed, true);
   assert.deepEqual(await readdir(path.join(root, 'state')), ['world']);
   assert.equal(await readFile(path.join(root, 'state', 'world', 'previous'), 'utf8'), 'last successful snapshot');
+});
+
+test('empty region files remain in remote snapshots and the binary probe uses a non-empty region', async (t) => {
+  const root = await temporary(t);
+  const emptyName = 'world/region/r.-1.-10.mca';
+  const api = fakeAPI({ extraFiles: { [emptyName]: Buffer.alloc(0) } });
+  const monitor = fakeMonitor();
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl: api.fetch, monitorFactory: monitor.factory });
+  assert.equal(result.status, 'ready');
+  assert.deepEqual(api.downloads.slice(0, 2), ['world/level.dat', 'world/region/r.0.0.mca']);
+  assert.ok(api.downloads.includes(emptyName));
+  assert.equal((await readFile(path.join(result.worldPath, 'region/r.-1.-10.mca'))).length, 0);
+  assert.deepEqual(await readFile(path.join(result.worldPath, 'region/r.0.0.mca')), REGION);
+});
+
+test('supplied snapshots retain empty regions without modifying the source', async (t) => {
+  const root = await temporary(t);
+  const source = path.join(root, 'source');
+  await mkdir(path.join(source, 'region'), { recursive: true });
+  await writeFile(path.join(source, 'level.dat'), LEVEL);
+  await writeFile(path.join(source, 'region/r.0.0.mca'), REGION);
+  await writeFile(path.join(source, 'region/r.1.0.mca'), Buffer.alloc(0));
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: { BLUEMAP_WORLD_SOURCE: source } });
+  assert.equal(result.status, 'ready');
+  assert.equal((await readFile(path.join(result.worldPath, 'region/r.1.0.mca'))).length, 0);
+  assert.equal((await readFile(path.join(source, 'region/r.1.0.mca'))).length, 0);
+});
+
+test('an unexpectedly empty transfer retries instead of becoming a valid empty region', async (t) => {
+  const root = await temporary(t);
+  const api = fakeAPI();
+  let attempts = 0;
+  const fetchImpl = async (url, options) => {
+    const response = await api.fetch(url, options);
+    if (url.includes('/files/data/') && url.endsWith('/r.0.0.mca/') && attempts++ === 0) return new Response(Buffer.alloc(0));
+    return response;
+  };
+  const monitor = fakeMonitor();
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl, monitorFactory: monitor.factory });
+  assert.equal(result.status, 'ready');
+  assert.equal(attempts, 2);
+  assert.deepEqual(await readFile(path.join(result.worldPath, 'region/r.0.0.mca')), REGION);
+});
+
+test('repeated empty transfers for a non-empty region discard the snapshot and retain prior state', async (t) => {
+  const root = await temporary(t);
+  await previousWorld(root);
+  const api = fakeAPI();
+  let attempts = 0;
+  const fetchImpl = async (url, options) => {
+    const response = await api.fetch(url, options);
+    if (url.includes('/files/data/') && url.endsWith('/r.0.0.mca/')) { attempts++; return new Response(Buffer.alloc(0)); }
+    return response;
+  };
+  const monitor = fakeMonitor();
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl, monitorFactory: monitor.factory });
+  assert.equal(result.status, 'skipped');
+  assert.equal(attempts, 3);
+  assert.deepEqual(await readdir(path.join(root, 'state')), ['world']);
+  assert.equal(await readFile(path.join(root, 'state/world/previous'), 'utf8'), 'last successful snapshot');
+});
+
+test('empty metadata and external chunk files remain invalid and identify the failing file', async (t) => {
+  for (const [options, filename] of [
+    [{ levelData: Buffer.alloc(0) }, 'level.dat'],
+    [{ externalChunkData: Buffer.alloc(0) }, 'c.0.0.mcc'],
+  ]) {
+    const root = await temporary(t);
+    await previousWorld(root);
+    const api = fakeAPI(options);
+    const monitor = fakeMonitor();
+    const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl: api.fetch, monitorFactory: monitor.factory });
+    assert.equal(result.status, 'skipped');
+    assert.ok(result.reason.includes(filename));
+    assert.ok(!result.reason.includes(ENV.EXAROTON_API_TOKEN));
+    assert.equal(await readFile(path.join(root, 'state/world/previous'), 'utf8'), 'last successful snapshot');
+  }
+});
+
+test('an Overworld containing only empty regions cannot satisfy the binary probe', async (t) => {
+  const root = await temporary(t);
+  await previousWorld(root);
+  const api = fakeAPI({ regionData: Buffer.alloc(0), extraFiles: { 'world/region/r.1.0.mca': Buffer.alloc(0) } });
+  const monitor = fakeMonitor();
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl: api.fetch, monitorFactory: monitor.factory });
+  assert.equal(result.status, 'skipped');
+  assert.match(result.reason, /no non-empty region/);
+  assert.deepEqual(api.downloads, []);
+  assert.equal(await readFile(path.join(root, 'state/world/previous'), 'utf8'), 'last successful snapshot');
 });
 
 test('temporary API errors retry and yield a complete snapshot', async (t) => {
