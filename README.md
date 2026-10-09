@@ -110,6 +110,15 @@ The required App Router `src/mdx-components.tsx` passes existing elements throug
 
 ## Renderer and static paths
 
+The Overworld map is limited to a **1,000 x 1,000-block square centered on X=0, Z=0**:
+X and Z run from -500 through 499, with no height restriction. The box `render-mask`
+in `bluemap/maps/overworld.conf` controls these bounds; change all four limits to move
+or enlarge the map. This restricts rendered terrain and generated map size. Snapshot
+collection still downloads every region, so it does not shorten the world download.
+Changing the map configuration invalidates the saved render fingerprint and starts a
+fresh render within the new bounds. The last complete map is kept until that succeeds.
+[BlueMap render masks](https://bluemap.bluecolored.de/wiki/customization/Masks.html)
+
 The standalone BlueMap CLI is pinned in `scripts/bluemap/render.mjs`, with an official
 release SHA-256 check, and CI installs Java 25. Templates under `bluemap/` use FILE storage,
 gzip tiles, `client-decompression: true`, relative `maps` URLs, and no built-in webserver.
