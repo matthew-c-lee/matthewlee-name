@@ -120,8 +120,8 @@ The required App Router `src/mdx-components.tsx` passes existing elements throug
 
 ## Renderer and static paths
 
-The Overworld map is limited to a **2,000 x 2,000-block square centered on X=0, Z=0**:
-X and Z run from -1000 through 999, with no height restriction. The box `render-mask`
+The Overworld map is limited to a **2,500 x 2,500-block square centered on X=0, Z=0**:
+X and Z run from -1250 through 1249, with no height restriction. The box `render-mask`
 in `bluemap/maps/overworld.conf` is the single shared setting for downloading and rendering;
 change its four limits to move
 or enlarge the map. This restricts rendered terrain and generated map size, and snapshot

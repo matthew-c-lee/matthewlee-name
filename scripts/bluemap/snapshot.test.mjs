@@ -14,9 +14,9 @@ const REGION = Buffer.alloc(8192);
 const ENV = { EXAROTON_API_TOKEN: 'test-private-token', EXAROTON_SERVER_ID: 'test-server' };
 const BOUNDS = { 'min-x': -500, 'max-x': 499, 'min-z': -500, 'max-z': 499 };
 
-test('the shared 2000-block render box selects no more than thirty-six surrounding regions', async () => {
+test('the shared 2500-block render box selects no more than thirty-six surrounding regions', async () => {
   const bounds = await readDownloadBounds();
-  assert.deepEqual(bounds, { 'min-x': -1000, 'max-x': 999, 'min-z': -1000, 'max-z': 999 });
+  assert.deepEqual(bounds, { 'min-x': -1250, 'max-x': 1249, 'min-z': -1250, 'max-z': 1249 });
   const names = [];
   for (let x = -10; x <= 10; x++) for (let z = -10; z <= 10; z++) names.push(`r.${x}.${z}.mca`);
   const selected = selectRegionFiles(names, bounds);
