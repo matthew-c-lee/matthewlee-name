@@ -7,11 +7,90 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { acquireSnapshot, watchOffline } from './snapshot.mjs';
+import { acquireSnapshot, parseDownloadBounds, readDownloadBounds, selectRegionFiles, watchOffline } from './snapshot.mjs';
 
 const LEVEL = gzipSync(Buffer.from([10, 0, 0, 0]));
 const REGION = Buffer.alloc(8192);
 const ENV = { EXAROTON_API_TOKEN: 'test-private-token', EXAROTON_SERVER_ID: 'test-server' };
+const BOUNDS = { 'min-x': -500, 'max-x': 499, 'min-z': -500, 'max-z': 499 };
+
+test('the shared 2000-block render box selects no more than thirty-six surrounding regions', async () => {
+  const bounds = await readDownloadBounds();
+  assert.deepEqual(bounds, { 'min-x': -1000, 'max-x': 999, 'min-z': -1000, 'max-z': 999 });
+  const names = [];
+  for (let x = -10; x <= 10; x++) for (let z = -10; z <= 10; z++) names.push(`r.${x}.${z}.mca`);
+  const selected = selectRegionFiles(names, bounds);
+  assert.equal(selected.length, 36);
+  for (const name of ['r.-3.-3.mca', 'r.-1.-1.mca', 'r.0.0.mca', 'r.2.2.mca']) assert.ok(selected.includes(name));
+  assert.ok(!selected.includes('r.3.0.mca'));
+  assert.ok(!selected.includes('r.-4.0.mca'));
+});
+
+test('unsupported, duplicate, subtractive or unbounded masks never narrow a snapshot', () => {
+  const body = 'min-x: -500, max-x: 499, min-z: -500, max-z: 499';
+  assert.deepEqual(parseDownloadBounds(`render-mask: [{ type: "box", ${body} }] # a box`), BOUNDS);
+  for (const config of [
+    '', 'render-mask: []', 'render-mask: [{type: circle, radius: 500}]',
+    `render-mask: [{${body}, subtract: true}]`, `render-mask: [{${body}} {}]`,
+    'render-mask: [{ min-x: -500, max-x: 499 }]',
+    `render-mask: [{${body}, min-x: 900}]`,
+    `render-mask: [{${body}}]\nrender-mask: []`,
+    `include "custom.conf"\nrender-mask: [{${body}}]`,
+  ]) assert.equal(parseDownloadBounds(config), null, config);
+});
+
+test('external chunk selection uses negative coordinates and the selected parent region', () => {
+  assert.deepEqual(selectRegionFiles([
+    'r.-2.0.mca', 'r.0.0.mca', 'r.2.0.mca',
+    'c.-33.0.mcc', 'c.-65.0.mcc', 'c.0.0.mcc', 'c.64.0.mcc', 'c.0.32.mcc',
+  ], BOUNDS), ['r.-2.0.mca', 'r.0.0.mca', 'c.-33.0.mcc', 'c.0.0.mcc']);
+});
+
+test('bounded API snapshots skip distant terrain and mod files before file-info or data requests', async (t) => {
+  const root = await temporary(t);
+  const api = fakeAPI({ extraFiles: {
+    'world/region/r.2.0.mca': REGION,
+    'world/region/r.-3.0.mca': REGION,
+    'world/region/c.64.0.mcc': Buffer.from([1]),
+    'world/region/DistantHorizons.sqlite': Buffer.from('not world terrain'),
+    'world/data/DistantHorizons.sqlite': Buffer.from('not world terrain'),
+    'world/DIM-1/region/r.0.0.mca': REGION,
+    'world/DIM1/region/r.0.0.mca': REGION,
+  } });
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl: api.fetch, monitorFactory: fakeMonitor().factory, bounds: BOUNDS });
+  assert.equal(result.status, 'ready');
+  assert.equal(api.downloads.length, 4);
+  assert.ok(api.requests.every(route => !/r\.2\.0|r\.-3\.0|c\.64\.0|DistantHorizons|DIM/.test(route)));
+  assert.deepEqual((await readdir(path.join(result.worldPath, 'region'))).sort(), ['c.0.0.mcc', 'r.0.0.mca', 'r.1.0.mca']);
+});
+
+test('an empty bounded selection retains the previous snapshot', async (t) => {
+  const root = await temporary(t);
+  await previousWorld(root);
+  const api = fakeAPI();
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: ENV, fetchImpl: api.fetch, monitorFactory: fakeMonitor().factory,
+    bounds: { 'min-x': 10000, 'max-x': 10999, 'min-z': 10000, 'max-z': 10999 } });
+  assert.equal(result.status, 'skipped');
+  assert.match(result.reason, /overlap the map bounds/);
+  assert.deepEqual(api.downloads, []);
+  assert.equal(await readFile(path.join(root, 'state/world/previous'), 'utf8'), 'last successful snapshot');
+});
+
+test('bounded supplied folders copy nearby terrain and exclude Distant Horizons and other dimensions', async (t) => {
+  const root = await temporary(t);
+  const source = path.join(root, 'source');
+  for (const name of ['region', 'data', 'DIM-1/region', 'DIM1/region']) await mkdir(path.join(source, name), { recursive: true });
+  await writeFile(path.join(source, 'level.dat'), LEVEL);
+  for (const name of ['r.-1.0.mca', 'r.0.0.mca', 'r.2.0.mca']) await writeFile(path.join(source, 'region', name), REGION);
+  await writeFile(path.join(source, 'data/DistantHorizons.sqlite'), 'private mod database');
+  await writeFile(path.join(source, 'DIM-1/region/r.0.0.mca'), REGION);
+  await writeFile(path.join(source, 'DIM1/region/r.0.0.mca'), REGION);
+  const result = await acquireSnapshot({ stateDir: path.join(root, 'state'), env: { BLUEMAP_WORLD_SOURCE: source }, bounds: BOUNDS });
+  assert.equal(result.status, 'ready');
+  assert.deepEqual((await readdir(result.worldPath)).sort(), ['level.dat', 'region']);
+  assert.deepEqual((await readdir(path.join(result.worldPath, 'region'))).sort(), ['r.-1.0.mca', 'r.0.0.mca']);
+  assert.deepEqual(await readFile(path.join(source, 'region/r.2.0.mca')), REGION);
+});
 
 async function temporary(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'bluemap-snapshot-test-'));

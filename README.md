@@ -50,9 +50,19 @@ world files. There is no world-ZIP API endpoint used here. [Official exaroton AP
 
 Snapshots require status `0` (OFFLINE). A read-only status WebSocket plus REST checks detect
 status transitions, including a quick start/stop; a transition or disconnected monitor
-discards the snapshot. Every region is downloaded again, including equal-size files, and
-external `.mcc` chunk files are included. Transfers have bounded retries/timeouts and atomic
+discards the snapshot. Every selected region is downloaded again, including equal-size files,
+and its external `.mcc` chunk files are included. Transfers have bounded retries/timeouts and atomic
 file writes; incomplete snapshots never become renderer input.
+
+Only Overworld `level.dat`, `r.<x>.<z>.mca` and `c.<x>.<z>.mcc` files are selected.
+Nether, End, entities, player data, mods and Distant Horizons databases are excluded.
+The downloader uses the map's single finite box mask to select intersecting regions,
+including a 32-block border for neighboring terrain. Region files cover 512 x 512 blocks;
+the current bounds require at most 36 region files, plus their external chunks. Other mask
+shapes, multiple masks or unbounded masks conservatively download the full Overworld.
+The same selection applies to supplied folders and ZIPs; ZIPs are still fully extracted
+privately under the existing safety and size checks before the relevant files are copied.
+Download logs report the selected region count and completed snapshot size.
 
 Zero-byte `.mca` files are retained as empty regions, matching BlueMap's own reader. This
 also lets incremental rendering remove terrain that no longer exists. The binary permission
@@ -110,11 +120,12 @@ The required App Router `src/mdx-components.tsx` passes existing elements throug
 
 ## Renderer and static paths
 
-The Overworld map is limited to a **1,000 x 1,000-block square centered on X=0, Z=0**:
-X and Z run from -500 through 499, with no height restriction. The box `render-mask`
-in `bluemap/maps/overworld.conf` controls these bounds; change all four limits to move
-or enlarge the map. This restricts rendered terrain and generated map size. Snapshot
-collection still downloads every region, so it does not shorten the world download.
+The Overworld map is limited to a **2,000 x 2,000-block square centered on X=0, Z=0**:
+X and Z run from -1000 through 999, with no height restriction. The box `render-mask`
+in `bluemap/maps/overworld.conf` is the single shared setting for downloading and rendering;
+change its four limits to move
+or enlarge the map. This restricts rendered terrain and generated map size, and snapshot
+collection automatically limits downloads to nearby regions using the same box bounds.
 Changing the map configuration invalidates the saved render fingerprint and starts a
 fresh render within the new bounds. The last complete map is kept until that succeeds.
 [BlueMap render masks](https://bluemap.bluecolored.de/wiki/customization/Masks.html)
@@ -192,7 +203,7 @@ the modern Overworld path, valid downloaded `level.dat`, and one complete valid 
 the entire real world has not been downloaded/rendered yet, and its final map size has not
 been measured. The original token was used only in memory and is not stored in this project.
 
-Completed implementation checks: existing lint; all 41 map tests (including actual ZIP
+Completed implementation checks: existing lint; all 47 map tests (including actual ZIP
 extraction); production export with both custom-domain and repository base paths; and
 combined iframe, full-map link, assets, CNAME and size validation. Actual Java 25/BlueMap 5.28
 renders of a small synthetic Minecraft 26.2 world produced compressed 3D tiles, reused

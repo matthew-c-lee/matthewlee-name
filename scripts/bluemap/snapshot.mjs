@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { createWriteStream } from 'node:fs';
-import { copyFile, lstat, mkdir, mkdtemp, open, readdir, rename, rm, stat } from 'node:fs/promises';
+import { copyFile, lstat, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat } from 'node:fs/promises';
 import https from 'node:https';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -17,6 +17,57 @@ const OVERWORLD_REGIONS = ['region', 'dimensions/minecraft/overworld/region'];
 const DEFAULT_MAX_BYTES = 8 * 1024 ** 3;
 
 class SnapshotUnavailable extends Error {}
+
+// Optimize only a single, finite box. Other valid BlueMap mask shapes fall back
+// to collecting all regions rather than risking missing terrain.
+export function parseDownloadBounds(configuration) {
+  const text = configuration.replace(/(?:#|\/\/).*$/gm, '');
+  if ((text.match(/\brender-mask\s*[:=]/g) || []).length !== 1 || /\binclude\b/.test(text)) return null;
+  const masks = [...text.matchAll(/\brender-mask\s*[:=]\s*\[([^\]]*)\]/g)];
+  if (masks.length !== 1) return null;
+  const box = masks[0][1].match(/^\s*\{([^{}]*)\}\s*$/);
+  if (!box) return null;
+  const field = /([a-z-]+)\s*[:=]\s*("[^"]*"|[^,\s]+)\s*,?/g;
+  const entries = [...box[1].matchAll(field)];
+  if (box[1].replace(field, '').trim()) return null;
+  const values = Object.fromEntries(entries.map((entry) => [entry[1], entry[2]]));
+  if (Object.keys(values).length !== entries.length) return null;
+  if (values.type && !['box', '"box"'].includes(values.type)) return null;
+  if (values.subtract && values.subtract !== 'false') return null;
+  const bounds = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (key === 'type' || key === 'subtract') continue;
+    if (!/^(?:min|max)-[xyz]$/.test(key) || !/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) return null;
+    bounds[key] = Number(value);
+  }
+  for (const axis of ['x', 'z']) {
+    if (bounds[`min-${axis}`] === undefined || bounds[`max-${axis}`] === undefined || bounds[`min-${axis}`] > bounds[`max-${axis}`]) return null;
+  }
+  return bounds;
+}
+
+export async function readDownloadBounds() {
+  return parseDownloadBounds(await readFile(new URL('../../bluemap/maps/overworld.conf', import.meta.url), 'utf8'));
+}
+
+export function selectRegionFiles(names, bounds) {
+  if (!bounds) return names;
+  // Keep one 32-block render tile of neighboring terrain for edge context.
+  const halo = 32;
+  const regions = new Set(names.filter((name) => {
+    const match = name.match(/^r\.(-?\d+)\.(-?\d+)\.mca$/);
+    if (!match) return false;
+    const x = Number(match[1]) * 512;
+    const z = Number(match[2]) * 512;
+    return x <= bounds['max-x'] + halo && x + 511 >= bounds['min-x'] - halo
+      && z <= bounds['max-z'] + halo && z + 511 >= bounds['min-z'] - halo;
+  }));
+  return names.filter((name) => {
+    if (regions.has(name)) return true;
+    const chunk = name.match(/^c\.(-?\d+)\.(-?\d+)\.mcc$/);
+    return chunk && regions.has(`r.${Math.floor(Number(chunk[1]) / 32)}.${Math.floor(Number(chunk[2]) / 32)}.mca`);
+  });
+}
 
 function positiveNumber(value, fallback) {
   const number = Number(value || fallback);
@@ -308,7 +359,7 @@ async function locateWorld(root) {
   return candidates[0];
 }
 
-async function copySuppliedWorld(source, staging, maxBytes, env, check) {
+async function copySuppliedWorld(source, staging, maxBytes, env, check, bounds) {
   const sourceInfo = await lstat(source);
   if (sourceInfo.isSymbolicLink()) throw new SnapshotUnavailable('World sources must not be symbolic links.');
   let root = source;
@@ -341,6 +392,8 @@ async function copySuppliedWorld(source, staging, maxBytes, env, check) {
       if (entries.some((name) => REGION_FILE.test(name))) { regionDirectory = candidate; names = entries; break; }
     }
     if (!regionDirectory) throw new SnapshotUnavailable('The supplied world has no Overworld region .mca files in the classic or modern world layout.');
+    names = selectRegionFiles(names, bounds);
+    if (!names.some((name) => REGION_FILE.test(name))) throw new SnapshotUnavailable('No Overworld regions overlap the map bounds; the previous map is retained.');
     let bytes = 0;
     const files = [{ from: 'level.dat', to: 'level.dat' }, ...names.map((name) => ({ from: `${regionDirectory}/${name}`, to: `region/${name}` }))];
     for (const { from, to } of files) {
@@ -370,7 +423,7 @@ async function replaceWorld(staging, destination) {
   if (backedUp) await rm(previous, { recursive: true, force: true });
 }
 
-export async function acquireSnapshot({ stateDir = '.bluemap', env = process.env, fetchImpl = fetch, monitorFactory = watchOffline } = {}) {
+export async function acquireSnapshot({ stateDir = '.bluemap', env = process.env, fetchImpl = fetch, monitorFactory = watchOffline, bounds = null } = {}) {
   const token = env.EXAROTON_API_TOKEN?.trim();
   const serverId = env.EXAROTON_SERVER_ID?.trim();
   const source = env.BLUEMAP_WORLD_SOURCE?.trim();
@@ -407,7 +460,7 @@ export async function acquireSnapshot({ stateDir = '.bluemap', env = process.env
     await mkdir(directory, { recursive: true });
     staging = await mkdtemp(path.join(directory, 'snapshot-'));
     if (source) {
-      await copySuppliedWorld(path.resolve(source), staging, maxBytes, env, check);
+      await copySuppliedWorld(path.resolve(source), staging, maxBytes, env, check, bounds);
     } else {
       await check();
       const level = await api.json(`/files/info/${encodedPath(`${world}/level.dat`)}/`);
@@ -427,6 +480,11 @@ export async function acquireSnapshot({ stateDir = '.bluemap', env = process.env
         if (entries.some((name) => REGION_FILE.test(name))) { regionDirectory = directory; names = entries; break; }
       }
       if (!regionDirectory) throw new SnapshotUnavailable('No Overworld region .mca files were available in the classic or modern world layout. Check EXAROTON_WORLD_PATH or set EXAROTON_REGION_PATH.');
+      const totalRegions = names.filter((name) => REGION_FILE.test(name)).length;
+      names = selectRegionFiles(names, bounds);
+      const selectedRegions = names.filter((name) => REGION_FILE.test(name)).length;
+      if (!selectedRegions) throw new SnapshotUnavailable('No Overworld regions overlap the map bounds; the previous map is retained.');
+      console.log(`Collecting offline Overworld snapshot: ${selectedRegions} of ${totalRegions} region files and ${names.length - selectedRegions} external chunk files.`);
       let firstName;
       let first;
       for (const name of names.filter((entry) => REGION_FILE.test(entry))) {
@@ -449,9 +507,10 @@ export async function acquireSnapshot({ stateDir = '.bluemap', env = process.env
         const remote = `${regionDirectory}/${name}`;
         const info = await api.json(`/files/info/${encodedPath(remote)}/`);
         if (info.isDirectory || info.isReadable !== true) throw new SnapshotUnavailable('exaroton denied a world file download; the incomplete snapshot was discarded.');
-        // Every region is re-downloaded; equal sizes do not imply equal contents.
+        // Every selected region is re-downloaded; equal sizes do not imply equal contents.
         bytes += await api.download(remote, path.join(staging, 'region', name), info.size, maxBytes - bytes);
       }
+      console.log(`Overworld snapshot download complete: ${(bytes / 1024 ** 2).toFixed(1)} MiB.`);
     }
     await check();
     await replaceWorld(staging, path.join(directory, 'world'));

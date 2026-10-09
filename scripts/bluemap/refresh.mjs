@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { acquireSnapshot } from './snapshot.mjs';
+import { acquireSnapshot, readDownloadBounds } from './snapshot.mjs';
 import { renderSnapshot } from './render.mjs';
 import { mergeMap } from './publish.mjs';
 
@@ -17,7 +17,7 @@ export async function refresh({ stateDir = '.bluemap', outDir = 'out', env = pro
   let candidateDir;
   let refreshStatus = 'skipped';
   try {
-    const snapshot = await acquireSnapshot({ stateDir, env });
+    const snapshot = await acquireSnapshot({ stateDir, env, bounds: await readDownloadBounds() });
     if (snapshot.status === 'ready') {
       const rendered = await renderSnapshot({ stateDir, worldPath: snapshot.worldPath,
         sourceKey: JSON.stringify({ server: env.EXAROTON_SERVER_ID, world: env.EXAROTON_WORLD_PATH || 'world', region: env.EXAROTON_REGION_PATH || '', source: env.BLUEMAP_WORLD_SOURCE || '' }) });
