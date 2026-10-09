@@ -119,6 +119,12 @@ Changing the map configuration invalidates the saved render fingerprint and star
 fresh render within the new bounds. The last complete map is kept until that succeeds.
 [BlueMap render masks](https://bluemap.bluecolored.de/wiki/customization/Masks.html)
 
+The BlueMap renderer timeout and Actions build-job timeout are both **six hours**.
+GitHub's hosted-runner limit applies to the whole job, including setup, snapshot downloads,
+rendering and artifact uploads, so CI has less than six hours available for rendering.
+An unfinished render is discarded; only complete renders are saved and published.
+[GitHub Actions execution limits](https://docs.github.com/en/actions/reference/limits)
+
 The standalone BlueMap CLI is pinned in `scripts/bluemap/render.mjs`, with an official
 release SHA-256 check, and CI installs Java 25. Templates under `bluemap/` use FILE storage,
 gzip tiles, `client-decompression: true`, relative `maps` URLs, and no built-in webserver.

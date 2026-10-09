@@ -65,7 +65,7 @@ function rendererEnvironment() {
     !/TOKEN|SECRET|PASSWORD|EXAROTON/i.test(key)));
 }
 
-async function runJava(args, { cwd, timeoutMs = 7_200_000, log = false } = {}) {
+async function runJava(args, { cwd, timeoutMs = 21_600_000, log = false } = {}) {
   return new Promise((resolveRun, reject) => {
     const child = spawn(javaExecutable(), args, {
       cwd,
@@ -92,7 +92,7 @@ async function runJava(args, { cwd, timeoutMs = 7_200_000, log = false } = {}) {
     child.once("error", error => { clearTimeout(timer); reject(new Error(`Unable to launch Java ${JAVA_MINIMUM_VERSION}+: ${error.code || error.message}`)); });
     child.once("close", code => {
       clearTimeout(timer);
-      if (timedOut) reject(new Error("BlueMap exceeded the two-hour rendering timeout."));
+      if (timedOut) reject(new Error("BlueMap exceeded the six-hour rendering timeout."));
       else if (code !== 0 || (log && (diagnostics || /\b(ERROR|SEVERE)\b/.test(lineBuffer)))) reject(new Error(`BlueMap did not complete successfully (exit ${code}). See renderer diagnostics above.`));
       else resolveRun(output);
     });
